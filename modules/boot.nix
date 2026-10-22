@@ -1,25 +1,28 @@
-{ ... }:
+{ pkgs, lib, ... }:
 
 {
   boot = {
     consoleLogLevel = 0;
-    initrd.verbose = false;
-    kernelModules = [ "kvm-intel" ];
+    initrd = {
+      verbose = false;
+      systemd.package = pkgs.systemd.overrideAttrs (old: {
+        postPatch = (old.postPatch or "") + ''
+            sed -i 's/message, SIZE_MAX);/"\\n  Enter password:", SIZE_MAX);/g' src/shared/ask-password-api.c
+            sed -i 's/"(press TAB for no echo) "/""/g' src/shared/ask-password-api.c
+            sed -i 's/&& !FLAGS_SET(flags, ASK_PASSWORD_SILENT)/\&\& 0/g' src/shared/ask-password-api.c
+            sed -i 's/glyph(GLYPH_BULLET)/"*"/g' src/shared/ask-password-api.c 
+        '';
+      });
+    };
     kernelParams = [
       "quiet"
-      "splash"
-      "boot.shell_on_fail"
-      "rd.udev.log_level=3"
-      "udev.log_priority=3"
-      "rd.systemd.show_status=false"
+      "vt.global_cursor_default=0"
     ];
     loader = {
-      efi.canTouchEfiVariables = true;
       timeout = 0;
       systemd-boot = {
-	enable = true;
+	      enable = true;
         editor = false;
-	configurationLimit = 10;
       };
     };
   };

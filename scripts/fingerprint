@@ -1,0 +1,3 @@
+#!/bin/sh
+sudo fprintd-enroll -f right-index-finger samir
+sudo fprintd-enroll -f left-index-finger samir

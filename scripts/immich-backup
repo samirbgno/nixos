@@ -1,0 +1,10 @@
+#!/bin/sh
+UPLOAD_LOCATION="/var/lib/immich"
+DATE=$(date +%Y%m%d_%H%M%S)
+
+sudo tar --zstd -cf "immich-backup-$DATE.tar.zst" \
+  --exclude='thumbs' \
+  --exclude='encoded-video' \
+  -C "$UPLOAD_LOCATION" .
+
+echo "Done."
