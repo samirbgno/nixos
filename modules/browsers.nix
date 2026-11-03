@@ -1,4 +1,6 @@
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
+
+with lib;
 
 {
   options.dotfiles.programs = {
@@ -91,7 +93,7 @@
     (mkIf config.dotfiles.programs.google-chrome.enable {
       home-manager.users.${user} = {
         home.packages = with pkgs; [
-          (unstable.google-chrome.override {
+          (google-chrome.override {
             commandLineArgs = [
               "--restore-last-session"
               "--hide-crash-restore-bubble"

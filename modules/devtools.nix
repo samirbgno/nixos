@@ -1,55 +1,84 @@
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 
-let 
+with lib;
+
+let
   user = config.dotfiles.user;
+  langs = config.dotfiles.dev.languages;
 in {
-  programs.nix-ld.enable = true;
-  home-manager.users.${user} = {
-    home.packages = with pkgs; [
-      gh
-      bruno
-      discord
-      lazydocker
-
-      nodejs_24
-
-      gcc
-      gnumake
-
-      claude-code
-
-      localsend
-
-      libreoffice
-      sigil
-      python3
-
-      texliveFull
-
-      pavucontrol
-    ];
-    programs.direnv = {
-      enable = true;
-      silent = true;
-      nix-direnv.enable = true;
-      config.whitelist.prefix = [
-        "/home/${user}/repos"
-      ];
-    };
-    programs.git = {
-      enable = true;
-      settings = {
-        user = {
-          name = "samir";
-          email = "samirbgno@gmail.com";
-        };
-        pull.rebase = true;
-        fetch.prune = true;
-        core.autocrlf = "input";
-        rebase.autoStash = true;
-        init.defaultBranch = "main";
-      };
+  options.dotfiles.dev = {
+    claude-code.enable = mkEnableOption "Enable Claude Code.";
+    languages = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      description = "List of programming languages to install.";
     };
   };
-  networking.firewall.allowedTCPPorts = [ 4321 8788 53317 ];
+
+  config = mkMerge [
+
+    # --- git --- #
+    {
+      home-manager.users.${user} = {
+        programs.git = {
+          enable = true;
+          settings = {
+            user = {
+              name = "samir";
+              email = "samirbgno@gmail.com";
+            };
+            pull.rebase = true;
+            fetch.prune = true;
+            core.autocrlf = "input";
+            rebase.autoStash = true;
+            init.defaultBranch = "main";
+          };
+        };
+      };
+    }
+
+    # --- direnv --- #
+    {
+      home-manager.users.${user}.programs.direnv = {
+        enable = true;
+        silent = true;
+        nix-direnv.enable = true;
+        config = {
+          whitelist = {
+            prefix = [
+              "/home/${user}/repos"
+            ];
+          };
+        };
+      };
+    }
+
+    # --- languages --- #
+    {
+      home-manager.users.${user}.home.packages = with pkgs; [ ]
+        ++ optionals (elem "nix" langs) [
+          nixd
+          nixfmt
+          statix
+          deadnix
+          nixpkgs-vet
+          nixpkgs-review
+        ]
+        ++ optionals (elem "latex" langs) [
+          texliveFull
+        ]
+        ++ optionals (elem "c" langs) [
+          gcc
+          gnumake
+        ];
+    }
+
+    # --- claude-code --- #
+    (mkIf config.dotfiles.dev.claude-code.enable {
+      home-manager.users.${user}.programs.claude-code = {
+        enable = true;
+      };
+    })
+
+  ];
 }

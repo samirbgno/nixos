@@ -1,0 +1,21 @@
+{
+  "nix.serverPath": "nixd",
+  "nix.enableLanguageServer": true,
+  "nix.serverSettings": {
+    "nixd": {
+      "formatting": {
+        "command": [ "nixfmt" ]
+      }
+    }
+  },
+  "[nix]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "editor.defaultFormatter": "jnoortheen.nix-ide"
+  },
+  "files.exclude": {
+    ".envrc": true,
+    ".direnv": true,
+    "flake.lock": true
+  }
+}

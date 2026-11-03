@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 
 with lib;
 
@@ -7,7 +7,7 @@ with lib;
     neovim.enable = mkEnableOption "Enable neovim editor";
     vscode.enable = mkEnableOption "Enable vscode editor";
   };
-  config = let 
+  config = let
     user = config.dotfiles.user;
   in mkMerge [
 
@@ -44,7 +44,7 @@ with lib;
       home-manager.users.${user} = {
         programs.vscode = {
           enable = true;
-          package = pkgs.unstable.vscode.override {
+          package = pkgs.vscode.override {
             commandLineArgs = "--password-store=gnome-libsecret";
           };
           mutableExtensionsDir = true;
@@ -71,5 +71,6 @@ with lib;
         };
       };
     })
+
   ];
 }

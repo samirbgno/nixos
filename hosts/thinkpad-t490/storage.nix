@@ -4,7 +4,7 @@
   imports = [ inputs.disko.nixosModules.disko ];
 
   services.btrbk.instances.local = {
-    onCalendar = "daily";    
+    onCalendar = "daily";
     settings = {
       snapshot_preserve_min = "latest";
       snapshot_preserve = "7d 4w 0m 0y";
@@ -21,10 +21,12 @@
     enable = true;
     memoryPercent = 25;
   };
-  swapDevices = [{
-    size = 24 * 1024;
-    device = "/swapfile";
-  }];
+  swapDevices = [
+    {
+      size = 24 * 1024;
+      device = "/swapfile";
+    }
+  ];
 
   disko.devices.disk.main = {
     type = "disk";
@@ -54,31 +56,52 @@
               subvolumes = {
                 "@root" = {
                   mountpoint = "/";
-                  mountOptions = [ "compress=zstd:3" "noatime" ];
+                  mountOptions = [
+                    "compress=zstd:3"
+                    "noatime"
+                  ];
                 };
                 "@nix" = {
                   mountpoint = "/nix";
-                  mountOptions = [ "compress=zstd:3" "noatime" ];
+                  mountOptions = [
+                    "compress=zstd:3"
+                    "noatime"
+                  ];
                 };
                 "@home" = {
                   mountpoint = "/home";
-                  mountOptions = [ "compress=zstd:3" "noatime" ];
+                  mountOptions = [
+                    "compress=zstd:3"
+                    "noatime"
+                  ];
                 };
                 "@log" = {
                   mountpoint = "/var/log";
-                  mountOptions = [ "compress=zstd:3" "noatime" ];
+                  mountOptions = [
+                    "compress=zstd:3"
+                    "noatime"
+                  ];
                 };
                 "@snapshots" = {
                   mountpoint = "/.snapshots";
-                  mountOptions = [ "compress=zstd:3" "noatime" ];
+                  mountOptions = [
+                    "compress=zstd:3"
+                    "noatime"
+                  ];
                 };
                 "@vm" = {
                   mountpoint = "/var/lib/libvirt";
-                  mountOptions = [ "noatime" "nodatacow" ];
+                  mountOptions = [
+                    "noatime"
+                    "nodatacow"
+                  ];
                 };
                 "@containers" = {
                   mountpoint = "/var/lib/containers";
-                  mountOptions = [ "noatime" "nodatacow" ];
+                  mountOptions = [
+                    "noatime"
+                    "nodatacow"
+                  ];
                 };
               };
             };

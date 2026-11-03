@@ -9,7 +9,6 @@ in {
   services.immich = {
     enable = true;
     host = "0.0.0.0";
-    package = pkgs.unstable.immich;
   };
   environment.systemPackages = [ pkgs.bindfs ];
   fileSystems."home/${user}/photos" = {
@@ -60,7 +59,12 @@ in {
       ];
     }
   ];
-  networking.firewall.allowedTCPPorts = [ 2283 ];
+  networking.firewall.allowedTCPPorts = [
+    2283
+    4321
+    8788
+    53317
+  ];
   home-manager.users.${user} = {
     home.packages = with pkgs; [
       zip
@@ -76,6 +80,16 @@ in {
       fwupd
       exfatprogs
       efibootmgr
+
+      pavucontrol
+
+      gh
+      bruno
+      discord
+      lazydocker
+      localsend
+      libreoffice
+      sigil
 
       (writeShellScriptBin "open-thunar" ''
         if [ "$#" -eq 0 ]; then

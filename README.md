@@ -14,7 +14,6 @@ A modular, scalable, and declarative NixOS environment built with Flakes and Hom
 ├── flake.nix             # Entry point, inputs, and outputs definition
 ├── flake.lock            # Pinned dependency versions
 ├── hosts/                # Per-machine configurations
-│   ├── common.nix        # Common configurations shared across hosts
 │   └── <host>/           # Replace <host> with the machine's hostname
 │       ├── default.nix   # Host entry point and module imports
 │       ├── system.nix    # Core OS setup (networking, locale, bootloader)
