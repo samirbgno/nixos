@@ -1,17 +1,40 @@
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 
-let 
-  user = config.dotfiles.user;
-in {
-  hardware.graphics.enable32Bit = true;
-  programs = {
-    steam.enable = true;
-    gamemode.enable = true;
-    gamescope.enable = true;
+with lib;
+
+{
+  options.dotfiles.programs = {
+    chess.enable = mkEnableOption "Enable chess game analyzer";
+    steam.enable = mkEnableOption "Enable steam gaming platform";
+    minecraft.enable = mkEnableOption "Enable minecraft game launcher";
   };
-  home-manager.users.${user}.home.packages = with pkgs; [
-    chessx
-    stockfish
-    prismlauncher
+  config = let 
+    user = config.dotfiles.user;
+  in mkMerge [
+
+    # --- chess --- #
+    (mkIf config.dotfiles.programs.chess.enable {
+      home-manager.users.${user}.home.packages = with pkgs; [
+        chessx
+        stockfish
+      ];
+    })
+
+    # --- steam --- #
+    (mkIf config.dotfiles.programs.steam.enable {
+      programs = {
+        steam.enable = true;
+        gamemode.enable = true;
+        gamescope.enable = true;
+      };
+    })
+
+    # --- minecraft --- #
+    (mkIf config.dotfiles.programs.minecraft.enable {
+      home-manager.users.${user}.home.packages = with pkgs; [
+        prismlauncher
+      ];
+    })
+
   ];
 }

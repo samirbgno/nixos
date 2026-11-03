@@ -1,0 +1,665 @@
+#!/usr/bin/env bash
+set -uo pipefail
+shopt -s extglob
+export NIX_CONFIG='experimental-features = nix-command flakes'
+cd "$(dirname "$0")" || exit 1
+
+# ui
+E=$'\e'
+R="$E[0m" B="$E[1m" D="$E[2m" RV="$E[7m"
+RED="$E[31m" GRN="$E[32m" YLW="$E[33m" WHT="$E[37m"
+
+mapfile -t ART <<'EOF'
+                        snixosnixosn
+                   snixo            ixosn
+                ixo                      ixo
+              sni                 nixos     sn
+            xo                 ixosnixosnix   ix
+           ix                 nixos    snixo   xo
+          n                  snixo  ix  nixosn   sn
+         s                   snixo       ixosn    n
+        os                   snixosn  os  xosn     i
+       xo                     nixosn      xosn     ix
+       xo                       xosnixosnixos      ix
+       xo                         snixosnix         x
+       xo                                           x
+       xo                                          ix
+        o                                          i
+        os                                        ni
+         sn                                      sn
+          ni                                    os
+           ix                                  xo
+             os                              ni
+               nix                        xos
+                  osni                osni
+                      xosnixosnixosnix
+EOF
+
+BW=56 RW=52 LOGMAX=10
+W=$(( BW + 2 + RW ))
+BH=${#ART[@]}
+SPIN=('|' '/' '-' '\')
+MNT=${MNT:-/mnt}
+KEYFILE=/tmp/luks.key
+LOGDIR=/tmp/installer
+mkdir -p "$LOGDIR"
+ 
+BALL=()
+for line in "${ART[@]}"; do
+  printf -v line '%-*s' "$BW" "$line"
+  n=${#line} a=0 z=$(( n - 1 ))
+  while (( a < n )) && [[ ${line:a:1} == ' ' ]]; do ((a++)); done
+  while (( a < n )) && [[ ${line:a:1} != ' ' ]]; do ((a++)); done
+  while (( z > 0 )) && [[ ${line:z:1} == ' ' ]]; do ((z--)); done
+  while (( z > 0 )) && [[ ${line:z-1:1} != ' ' ]]; do ((z--)); done
+  if (( z <= a )); then
+    BALL+=("$WHT$line$R")
+  else
+    BALL+=("$WHT${line:0:a}$B${line:a:z-a}$R$WHT${line:z}$R")
+  fi
+done
+ 
+rep() { local s; printf -v s '%*s' "$2" ''; REP=${s// /$1}; }
+rep ' ' "$BW"; BLANK=$REP
+ 
+STEPS=('host' 'flake update' 'disk' 'partition' 'install' 'password' 'config')
+STATE=(); for _ in "${STEPS[@]}"; do STATE+=(todo); done
+CUR=0 METER=1 HOST='' HEAD='' HEAD_SUB='' NOTE='' REVEAL=$BH SI=0 ERR='' LOGF=''
+BODY=() PRE=() LOG=() LOG_ON=0 LOG_TITLE='' PROG=-1 PROG_LABEL=''
+PH=() PHS=() PHD=() PHI=-1
+ 
+term_size() {
+  local r c
+  read -r r c < <(stty size 2>/dev/null) || { r=48 c=120; }
+  ROWS=$r COLS=$c
+  LOGN=$(( ROWS - BH - 14 ))
+  (( LOGN > LOGMAX )) && LOGN=$LOGMAX
+  (( LOGN < 3 )) && LOGN=3
+  PADL=$(( (COLS - W) / 2 )); (( PADL < 0 )) && PADL=0
+  PADT=$(( (ROWS - BH - 12 - LOGN) / 2 )); (( PADT < 1 )) && PADT=1
+  printf -v P '%*s' "$PADL" ''
+}
+vlen() { local s=${1//$E\[*([0-9;])m/}; VL=${#s}; }
+padr() { vlen "$1"; local n=$(( $2 - VL )); (( n < 0 )) && n=0; printf -v PADDED '%s%*s' "$1" "$n" ''; }
+mkbar() {
+  local f=$(( $1 * $2 / 100 ))
+  rep '█' "$f"; local a=$REP
+  rep '░' $(( $2 - f ))
+  BAR="$B$WHT$a$R$D$REP$R"
+}
+ 
+right_col() {
+  local i done=0
+  RC=('' '' '' '' '')
+  RC+=("$B${WHT}S A M I R ' S   N I X O S   I N S T A L L E R$R")
+  rep '─' 47; RC+=("$D$REP$R")
+  RC+=("${HOST:+${D}host$R  $HOST}")
+  RC+=('')
+  for i in "${!STEPS[@]}"; do
+    case ${STATE[i]} in
+      done) RC+=("   $GRN+$R  ${STEPS[i]}"); ((done++)) ;;
+      act)  RC+=("   $B$WHT>$R  $B$WHT${STEPS[i]}$R") ;;
+      fail) RC+=("   $RED!$R  $RED${STEPS[i]}$R") ;;
+      *)    RC+=("   $D-  ${STEPS[i]}$R") ;;
+    esac
+  done
+  RC+=('')
+  mkbar $(( done * 100 / ${#STEPS[@]} )) 34
+  RC+=("   $BAR  $D$done/${#STEPS[@]}$R")
+}
+ 
+render() {
+  right_col
+  local out="$E[H" i line ball
+  for ((i = 0; i < PADT; i++)); do out+="$E[K"$'\n'; done
+  for ((i = 0; i < BH; i++)); do
+    if (( i < REVEAL )); then ball=${BALL[i]}; else ball=$BLANK; fi
+    padr "${RC[i]:-}" "$RW"
+    out+="$P$ball  $PADDED$E[K"$'\n'
+  done
+  rep '─' "$W"
+  out+="$E[K"$'\n'"$P$D$REP$R$E[K"$'\n'"$E[K"$'\n'
+  out+="$P  $B$WHT$HEAD$R${HEAD_SUB:+  $D$HEAD_SUB$R}$E[K"$'\n'$E[K$'\n'
+  for line in "${BODY[@]}"; do out+="$P$line$E[K"$'\n'; done
+  [[ -n $NOTE ]] && out+="$E[K"$'\n'"$P    $NOTE$E[K"$'\n'
+  if (( LOG_ON )); then
+    local bw=$(( W - 4 )) inner=$(( W - 8 )) n=${#LOG[@]} l s=0
+    (( n > LOGN )) && s=$(( n - LOGN ))
+    rep '─' $(( bw - ${#LOG_TITLE} - 5 ))
+    out+="$E[K"$'\n'"$P  $D┌─ $LOG_TITLE $REP┐$R$E[K"$'\n'
+    for ((i = 0; i < LOGN; i++)); do
+      l=''
+      (( s + i < n )) && l=${LOG[s + i]:0:$inner}
+      padr "$l" "$inner"; l=$PADDED
+      if (( s + i == n - 1 )); then out+="$P  $D│$R $l $D│$R$E[K"$'\n'
+      else                          out+="$P  $D│ $l │$R$E[K"$'\n'; fi
+    done
+    rep '─' $(( bw - 2 )); out+="$P  $D└$REP┘$R$E[K"$'\n'
+  fi
+  if (( PROG >= 0 )); then
+    mkbar "$PROG" 44
+    out+="$P  $BAR $B$WHT$(printf '%3d' "$PROG")%$R  $D$PROG_LABEL$R$E[K"$'\n'
+  fi
+  printf '%s%s' "$out" "$E[J"
+}
+ 
+begin() { CUR=$1; STATE[CUR]=act; HEAD=$2; HEAD_SUB=${3:-}; BODY=(); PRE=(); LOG=(); LOG_ON=0; LOG_TITLE=''; PROG=-1; NOTE=''; PH=(); PHS=(); PHD=(); PHI=-1; }
+finish() { STATE[CUR]=done; }
+logp() { LOG+=("$1"); (( ${#LOG[@]} > LOGMAX )) && LOG=("${LOG[@]:1}"); }
+cursor() { [[ $1 == on ]] && printf '%s' "$E[?25h" || printf '%s' "$E[?25l"; }
+ 
+cleanup() { rm -f "$KEYFILE"; printf '%s' "$E[?25h$R"; }
+trap cleanup EXIT
+trap 'cleanup; printf "\n"; exit 130' INT
+ 
+quit() {
+  STATE[CUR]=fail
+  render
+  printf '\n%s    %slogs%s  %s\n\n' "$P" "$D" "$R" "$LOGDIR"
+  exit 1
+}
+ 
+read_key() {
+  KEY=''
+  IFS= read -rsn1 KEY || return 1
+  if [[ $KEY == "$E" ]]; then local rest=''; IFS= read -rsn2 -t 0.05 rest; KEY+=$rest; fi
+}
+ 
+menu() {
+  local sel=0 i
+  MENU=("$@")
+  while :; do
+    BODY=("${PRE[@]}")
+    for i in "${!MENU[@]}"; do
+      if (( i == sel )); then BODY+=("    $B$WHT>$R $RV$B ${MENU[i]} $R")
+      else                    BODY+=("      $D${MENU[i]}$R"); fi
+    done
+    BODY+=('' "    ${D}up/down  enter$R")
+    render; read_key || exit 1
+    case $KEY in
+      "$E[A"|k) (( sel > 0 )) && ((sel--)) ;;
+      "$E[B"|j) (( sel < ${#MENU[@]} - 1 )) && ((sel++)) ;;
+      '') CHOICE=$sel; return ;;
+    esac
+  done
+}
+ 
+ph_init() { PH=("$@"); PHS=(); PHD=(); PHI=-1; for _ in "$@"; do PHS+=(todo); PHD+=(''); done; }
+ph_go() {
+  local i
+  (( $1 <= PHI )) && return
+  for ((i = 0; i < $1; i++)); do PHS[i]=done; done
+  PHS[$1]=act PHI=$1
+}
+ph_done() { local i; for i in "${!PHS[@]}"; do PHS[i]=done; done; PHI=${#PHS[@]}; ph_body; }
+ph_body() {
+  local i
+  BODY=("${PRE[@]}")
+  for i in "${!PH[@]}"; do
+    case ${PHS[i]} in
+      done) padr "${PH[i]}" 20; BODY+=("    $GRN+$R  $PADDED$D${PHD[i]}$R") ;;
+      fail) padr "${PH[i]}" 20; BODY+=("    $RED!$R  $RED$PADDED$R$D${PHD[i]}$R") ;;
+      act)  BODY+=("    $WHT${SPIN[SI]}$R  $B$WHT${PH[i]}$R") ;;
+      *)    BODY+=("    $D-  ${PH[i]}$R") ;;
+    esac
+  done
+}
+ 
+feed() {
+  local l=${2//$'\r'/}
+  l=${l//$E\[*([0-9;?])[a-zA-Z]/}
+  "$1" "$l"
+}
+h_log() { [[ -n $1 ]] && logp "$1"; }
+capture() { local out=$1; shift; "$@" >"$out"; }
+ 
+run_cmd() {
+  local name=$1 handler=$2 pid fd line='' carry='' alive st; shift 2
+  LOGF=$LOGDIR/$name.log
+  : >"$LOGF"
+  "$@" >>"$LOGF" 2>&1 </dev/null &
+  pid=$!
+  exec {fd}<"$LOGF"
+  while :; do
+    alive=1; kill -0 "$pid" 2>/dev/null || alive=0
+    while IFS= read -r line <&"$fd"; do feed "$handler" "$carry$line"; carry=''; done
+    carry+=$line; line=''
+    SI=$(( (SI + 1) % ${#SPIN[@]} ))
+    ph_body; render
+    (( alive )) || break
+    sleep 0.1
+  done
+  while IFS= read -r line <&"$fd"; do feed "$handler" "$carry$line"; carry=''; done
+  carry+=$line
+  [[ -n $carry ]] && feed "$handler" "$carry"
+  exec {fd}<&-
+  wait "$pid"; st=$?
+  ph_body; render
+  return "$st"
+}
+ 
+run_fg() {
+  local st
+  render; printf '\n'; cursor on
+  "$@"; st=$?
+  cursor off; printf '%s' "$E[2J"
+  return "$st"
+}
+ 
+attempt() {
+  local i
+  while ! "$@"; do
+    STATE[CUR]=fail
+    for i in "${!PHS[@]}"; do [[ ${PHS[i]} == act ]] && PHS[i]=fail; done
+    PROG=-1; (( ${#LOG[@]} )) && LOG_ON=1
+    PRE=()
+    ph_body
+    PRE=("${BODY[@]}" '' "    $RED!$R  ${ERR:-failed}${LOGF:+  $D$LOGF$R}" '')
+    menu 'retry' 'quit'
+    (( CHOICE == 1 )) && quit
+    ERR='' NOTE=''
+  done
+  ERR=''
+}
+ 
+secret_line() {
+  local len=$2 n=$2 col=$D meter='' i lvl=0
+  (( n > 40 )) && n=40
+  rep '*' "$n"
+  if (( ! METER )); then
+    printf '\r%s    %s?%s %-12s %s%s' "$P" "$YLW" "$R" "$1" "$REP" "$E[K"
+    return
+  fi
+  if   (( len == 0 )); then lvl=0
+  elif (( len < 8 ));  then lvl=1 col=$RED
+  elif (( len < 14 )); then lvl=3 col=$YLW
+  else                      lvl=5 col=$GRN; fi
+  for ((i = 0; i < 5; i++)); do (( i < lvl )) && meter+="$col#" || meter+="$D-"; done
+  printf '\r%s    %s?%s %-12s %s[%s%s]%s  %s%s' "$P" "$YLW" "$R" "$1" "$D" "$meter" "$D" "$R" "$REP" "$E[K"
+}
+read_secret() {
+  local s='' c
+  secret_line "$1" 0
+  while IFS= read -rsn1 c; do
+    case $c in
+      '') break ;;
+      $'\x7f'|$'\b') s=${s%?} ;;
+      "$E") IFS= read -rsn2 -t 0.05 _ ;;
+      *) s+=$c ;;
+    esac
+    secret_line "$1" "${#s}"
+  done
+  SECRET=$s
+}
+ask_secret() {
+  local a
+  cursor on
+  while :; do
+    render; read_secret "$1"; a=$SECRET
+    if [[ -z $a ]]; then NOTE="$RED!$R  empty"; continue; fi
+    printf '\n'; read_secret 'confirm'
+    if [[ $a == "$SECRET" ]]; then PASS=$a NOTE='' SECRET=''; cursor off; return; fi
+    NOTE="$RED!$R  no match"
+  done
+}
+write_key() { ( umask 077; printf '%s' "$1" >"$KEYFILE" ); }
+ 
+refs_key() {
+  local f
+  for f in "$1" $(nix-store -q --references "$1" 2>/dev/null); do
+    [[ -f $f ]] && grep -qF "$KEYFILE" "$f" && return 0
+  done
+  return 1
+}
+ 
+rev_of() {
+  local u=${1%%\?*}
+  u=${u##*/}
+  [[ $u =~ ^[0-9a-f]{40}$ ]] && u=${u:0:7}
+  REV=${u:0:14}
+}
+RE_INPUT="(Updated|Added) input '([^']+)'"
+RE_NEW="→ '([^']+)'"
+RE_OLD="^ +'([^']+)'"
+h_flake() {
+  local l=$1
+  h_log "$l"
+  if [[ $l =~ $RE_INPUT ]]; then
+    FL_NAME=${BASH_REMATCH[2]} FL_MODE=${BASH_REMATCH[1]} FL_OLD=''
+  elif [[ -n ${FL_NAME:-} && $l =~ $RE_NEW ]]; then
+    rev_of "${BASH_REMATCH[1]}"; UPD+=("$FL_NAME|$FL_OLD|$REV"); FL_NAME=''
+  elif [[ -n ${FL_NAME:-} && $l =~ $RE_OLD ]]; then
+    rev_of "${BASH_REMATCH[1]}"
+    if [[ $FL_MODE == Added ]]; then UPD+=("$FL_NAME|new|$REV"); FL_NAME=''
+    else FL_OLD=$REV; fi
+  fi
+}
+ 
+h_disko() {
+  local l=$1
+  h_log "$l"
+  case $l in
+    *sgdisk*--new*|*sgdisk*-n\ *|*parted*mkpart*) ph_go 1 ;;
+    *luksFormat*) ph_go 2 ;;
+    *pvcreate*|*vgcreate*) ph_go 3 ;;
+    *mkswap*) ph_go 4 ;;
+    *mkfs.btrfs*|*'btrfs subvolume create'*) ph_go 5 ;;
+    *mount\ *) (( PHI >= 5 )) && ph_go 6 ;;
+  esac
+}
+h_unlock() {
+  local l=$1
+  h_log "$l"
+  case $l in
+    *cryptsetup*open*|*luksOpen*) ph_go 0 ;;
+    *vgchange*|*lvchange*) ph_go 1 ;;
+    *mount\ *) ph_go 2 ;;
+  esac
+}
+ 
+RE_TOTAL='^these ([0-9]+) paths will be fetched'
+RE_ONE='^this path will be fetched'
+RE_BUILDS='^these ([0-9]+) derivations will be built'
+RE_BUILD1='^this derivation will be built'
+RE_DRV="^building '/nix/store/[a-z0-9]{32}-([^']+)\\.drv'"
+prog_set() {
+  local d=$(( COUNT + BSTART )) t=$(( TOTAL + NBUILD ))
+  (( d > t )) && t=$d
+  (( t > 0 )) || return
+  PROG=$(( d * 100 / t )); (( PROG > 99 )) && PROG=99
+  PROG_LABEL="$1  $d/$t"
+}
+RE_COPY="^copying path '/nix/store/([a-z0-9]{32})-([^']+)'"
+h_install() {
+  local l=$1
+  if [[ $l =~ $RE_TOTAL ]]; then
+    TOTAL=$(( TOTAL + BASH_REMATCH[1] )); h_log "$l"
+  elif [[ $l =~ $RE_ONE ]]; then
+    TOTAL=$(( TOTAL + 1 )); h_log "$l"
+  elif [[ $l =~ $RE_BUILDS ]]; then
+    NBUILD=$(( NBUILD + BASH_REMATCH[1] )); h_log "$l"
+  elif [[ $l =~ $RE_BUILD1 ]]; then
+    NBUILD=$(( NBUILD + 1 )); h_log "$l"
+  elif [[ $l == '  /nix/store/'* ]]; then
+    :
+  elif [[ $l =~ $RE_COPY ]]; then
+    ph_go 1
+    COUNT=$(( COUNT + 1 ))
+    printf -v l '%-34s %s' "${BASH_REMATCH[2]}" "$D/nix/store/${BASH_REMATCH[1]:0:12}...$R"
+    logp "$l"
+    prog_set "${BASH_REMATCH[2]}"
+    PHD[1]="$COUNT"
+  elif [[ $l =~ $RE_DRV ]]; then
+    ph_go 2; BSTART=$(( BSTART + 1 )); h_log "$l"
+    prog_set "${BASH_REMATCH[1]}"
+    PHD[2]="$BSTART"
+  elif [[ $l == building\ \'* ]]; then
+    ph_go 2; h_log "$l"
+  elif [[ $l == *'installing the boot loader'* ]]; then
+    ph_go 3; PROG=-1; h_log "$l"
+  else
+    h_log "$l"
+  fi
+}
+ 
+# checks
+[[ -f flake.nix && -d hosts ]] || { printf 'run it from the repo root\n' >&2; exit 1; }
+command -v nix >/dev/null || { printf 'nix not found\n' >&2; exit 1; }
+sudo -n true 2>/dev/null || { printf 'needs passwordless sudo (run it from the live usb)\n' >&2; exit 1; }
+mapfile -t HOSTS < <(find hosts -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+(( ${#HOSTS[@]} )) || { printf 'no hosts in ./hosts\n' >&2; exit 1; }
+ 
+# start
+term_size
+if (( COLS < W || ROWS < BH + 25 )); then
+  printf '%s!%s terminal %sx%s, needs %sx%s\n' "$YLW" "$R" "$COLS" "$ROWS" "$W" "$(( BH + 25 ))"
+  read -rp '  resize and press enter ' _
+  term_size
+fi
+trap term_size WINCH
+printf '%s' "$E[2J$E[H"
+cursor off
+for ((REVEAL = 0; REVEAL <= BH; REVEAL++)); do render; sleep 0.04; done
+sleep 0.3
+ 
+# host
+begin 0 'host' "${#HOSTS[@]} in ./hosts"
+if [[ -n ${1:-} && -d hosts/${1:-} ]]; then
+  HOST=$1
+else
+  menu "${HOSTS[@]}"
+  HOST=${HOSTS[CHOICE]}
+fi
+finish
+ 
+# update
+do_flake() {
+  local u n o w
+  begin 1 'flake update' 'nix flake update'
+  LOG_TITLE='nix'
+  UPD=() FL_NAME=''
+  ph_init 'updating inputs'; ph_go 0
+  run_cmd flake h_flake nix flake update || { ERR='nix flake update failed'; return 1; }
+  ph_done
+  BODY+=('')
+  if (( ${#UPD[@]} )); then
+    for u in "${UPD[@]}"; do
+      IFS='|' read -r n o w <<<"$u"
+      padr "$n" 14
+      BODY+=("      $D$PADDED$R ${o:-?} $D->$R $w")
+    done
+  else
+    BODY+=("      ${D}no changes$R")
+  fi
+  render; sleep 0.8
+}
+attempt do_flake
+finish
+ 
+# disk
+DISK_EXPR='d: builtins.concatStringsSep "\n" (builtins.attrValues (builtins.mapAttrs (n: x: x.device + "|" + builtins.concatStringsSep " " (map (p: p.label or "") (builtins.attrValues (x.content.partitions or {})))) d)) + "\n"'
+CFG=".#nixosConfigurations"
+do_disk() {
+  local entry dev labels l
+  begin 2 'disk' 'disko'
+  LOG_TITLE='nix'
+  ph_init 'evaluate' 'build'; ph_go 0
+  run_cmd disk-eval h_log capture "$LOGDIR/devices" nix eval --raw "$CFG.$HOST.config.disko.devices.disk" --apply "$DISK_EXPR" \
+    || { ERR='evaluating disko.devices failed'; return 1; }
+  mapfile -t DISKS < <(grep '|' "$LOGDIR/devices")
+  (( ${#DISKS[@]} )) || { ERR='no disks in disko.devices'; return 1; }
+ 
+  EXISTS=1
+  for entry in "${DISKS[@]}"; do
+    labels=${entry#*|}
+    [[ -n $labels ]] || EXISTS=0
+    for l in $labels; do [[ -e /dev/disk/by-partlabel/$l ]] || EXISTS=0; done
+  done
+  MOUNTED=0; mountpoint -q "$MNT" 2>/dev/null && MOUNTED=1
+ 
+  ph_go 1
+  run_cmd disk-build h_log capture "$LOGDIR/disko-path" nix build --no-link --print-out-paths "$CFG.$HOST.config.system.build.diskoScript" \
+    || { ERR='building diskoScript failed'; return 1; }
+  DISKO=$(<"$LOGDIR/disko-path")
+  KEYED_FMT=0; refs_key "$DISKO" && KEYED_FMT=1
+  MOUNTSCRIPT='' KEYED_MNT=0
+  if (( EXISTS && ! MOUNTED )); then
+    if run_cmd disk-build-mount h_log capture "$LOGDIR/mount-path" nix build --no-link --print-out-paths "$CFG.$HOST.config.system.build.mountScript"; then
+      MOUNTSCRIPT=$(<"$LOGDIR/mount-path")
+      refs_key "$MOUNTSCRIPT" && KEYED_MNT=1
+    fi
+  fi
+  ph_done
+}
+attempt do_disk
+ 
+INFO=()
+for entry in "${DISKS[@]}"; do
+  dev=${entry%%|*}
+  read -r model < <(lsblk -dno MODEL "$dev" 2>/dev/null)
+  read -r size < <(lsblk -dno SIZE "$dev" 2>/dev/null)
+  INFO+=("    $B$WHT$dev$R  $D${model:-unknown}  ${size:-?}$R")
+  while read -r pname psize pfs; do
+    padr "${pname##*/}" 14; pname=$PADDED
+    printf -v psize '%8s' "$psize"
+    INFO+=("      $D$pname$R$psize  $D${pfs:-}$R")
+  done < <(lsblk -lnpo NAME,SIZE,FSTYPE "$dev" 2>/dev/null | tail -n +2)
+  INFO+=('')
+done
+HEAD_SUB="${#DISKS[@]} from disko"
+ 
+MODE=fresh
+if (( MOUNTED )); then
+  PRE=("${INFO[@]}" "    ${D}$MNT is mounted$R" '')
+  menu 'resume' 'start over'
+  (( CHOICE == 0 )) && MODE=mounted
+elif (( EXISTS )) && [[ -n $MOUNTSCRIPT ]]; then
+  PRE=("${INFO[@]}" "    ${D}existing layout found$R" '')
+  menu 'resume' 'start over'
+  (( CHOICE == 0 )) && MODE=resume
+fi
+ 
+if [[ $MODE == fresh ]]; then
+  if (( MOUNTED )); then sudo umount -R "$MNT" 2>/dev/null; fi
+  BODY=("${INFO[@]}")
+  rep '─' 50
+  BODY+=("    $RED┌$REP┐$R")
+  padr "$B${RED}!$R  ${B}everything on these disks will be erased$R" 48
+  BODY+=("    $RED│$R $PADDED $RED│$R")
+  BODY+=("    $RED└$REP┘$R")
+  PRE=()
+  while :; do
+    render
+    printf '%s    %s?%s type %s%s%s to confirm  ' "$P" "$YLW" "$R" "$B" "$HOST" "$R"
+    cursor on; read -r confirm; cursor off
+    [[ $confirm == "$HOST" ]] && break
+    NOTE="$RED!$R  does not match"
+  done
+fi
+NOTE=''
+finish
+ 
+# partition
+do_partition() {
+  begin 3 'partition' 'disko'
+  if (( KEYED_FMT )); then
+    HEAD='passphrase' HEAD_SUB='luks'
+    ask_secret 'passphrase'
+    write_key "$PASS"; PASS=''
+    HEAD='partition' HEAD_SUB='disko'
+  fi
+  LOG_ON=1 LOG_TITLE='disko'
+  ph_init 'wipe' 'partitions' 'luks' 'lvm' 'swap' 'btrfs' 'mount'; ph_go 0
+  if (( KEYED_FMT )); then
+    run_cmd partition h_disko sudo "$DISKO" || { rm -f "$KEYFILE"; ERR='disko failed'; return 1; }
+  else
+    run_fg sudo "$DISKO" || { ERR='disko failed'; return 1; }
+  fi
+  rm -f "$KEYFILE"
+  mountpoint -q "$MNT" || { ERR="$MNT is not mounted"; return 1; }
+  ph_done; PHD[6]=$MNT; ph_body; render
+  sleep 0.5
+}
+do_unlock() {
+  begin 3 'unlock' 'disko'
+  LOG_TITLE='disko'
+  ph_init 'luks' 'lvm' 'mount'
+  if (( KEYED_MNT )); then
+    METER=0; cursor on; render; read_secret 'passphrase'; cursor off; METER=1
+    write_key "$SECRET"; SECRET=''
+    LOG_ON=1
+    ph_go 0
+    run_cmd unlock h_unlock sudo "$MOUNTSCRIPT" || { rm -f "$KEYFILE"; ERR='unlock failed'; return 1; }
+  else
+    LOG_ON=1
+    run_fg sudo "$MOUNTSCRIPT" || { ERR='unlock failed'; return 1; }
+  fi
+  rm -f "$KEYFILE"
+  mountpoint -q "$MNT" || { ERR="$MNT is not mounted"; return 1; }
+  ph_done; PHD[2]=$MNT; ph_body; render
+  sleep 0.5
+}
+case $MODE in
+  fresh)   attempt do_partition ;;
+  resume)  attempt do_unlock ;;
+  mounted) begin 3 'partition' 'disko'; ph_init 'mount'; ph_done; PHD[0]="$MNT already mounted"; ph_body; render; sleep 0.6 ;;
+esac
+finish
+ 
+# install
+do_install() {
+  begin 4 'install' "nixos-install --flake .#$HOST"
+  LOG_ON=1 LOG_TITLE='nixos-install'
+  COUNT=0 TOTAL=0 NBUILD=0 BSTART=0
+  ph_init 'evaluate' 'fetch' 'build' 'boot loader'; ph_go 0
+  run_cmd install h_install sudo nixos-install --root "$MNT" --flake ".#$HOST" --no-root-passwd \
+    || { ERR='nixos-install failed'; return 1; }
+  PROG=-1
+  ph_done; PHD[1]="$COUNT paths"; ph_body; render
+  sleep 0.5
+}
+attempt do_install
+finish
+ 
+# password
+mapfile -t USERS < <(awk -F: '$3>=1000 && $3<30000 && $7 !~ /(nologin|false)$/ {print $1}' "$MNT/etc/passwd" 2>/dev/null)
+do_password() {
+  local u
+  (( ${#USERS[@]} )) || { begin 5 'password'; ERR="no users in $MNT/etc/passwd"; return 1; }
+  for u in "${USERS[@]}"; do
+    begin 5 'password' "$u"
+    ask_secret 'password'
+    LOGF=$LOGDIR/password.log
+    printf '%s:%s\n' "$u" "$PASS" | sudo nixos-enter --root "$MNT" -c chpasswd >"$LOGF" 2>&1 \
+      || { PASS=''; ERR="chpasswd failed for $u"; return 1; }
+    PASS=''
+  done
+}
+attempt do_password
+finish
+ 
+# config
+REPO=$(basename "$PWD")
+do_config() {
+  local u=${USERS[0]} uid gid dest
+  dest=/home/$u
+  IFS=: read -r _ _ uid gid _ < <(grep "^$u:" "$MNT/etc/passwd")
+  begin 6 'config' "$dest/$REPO"
+  LOG_TITLE='config'
+  ph_init 'copy' 'owner' 'mode'; ph_go 0
+  run_cmd config-copy h_log sudo bash -c 'mkdir -p "$1" && rm -rf "$1/$2" && cp -a "$3" "$1/$2"' _ "$MNT$dest" "$REPO" "$PWD" \
+    || { ERR='copy failed'; return 1; }
+  ph_go 1
+  run_cmd config-owner h_log sudo chown -R "$uid:$gid" "$MNT$dest/$REPO" \
+    && run_cmd config-owner-home h_log sudo chown "$uid:$gid" "$MNT$dest" \
+    || { ERR='chown failed'; return 1; }
+  PHD[1]=$u
+  ph_go 2
+  run_cmd config-mode h_log sudo chmod 0750 "$MNT$dest" || { ERR='chmod failed'; return 1; }
+  PHD[2]='0750'
+  ph_done; render
+  sleep 0.4
+}
+attempt do_config
+finish
+ 
+# done
+HEAD='done' HEAD_SUB='' LOG_ON=0 PROG=-1 PRE=()
+BODY=("    ${D}host  $R  $HOST")
+for entry in "${DISKS[@]}"; do BODY+=("    ${D}disk  $R  ${entry%%|*}"); done
+BODY+=(
+  "    ${D}users $R  ${USERS[*]}"
+  "    ${D}config$R  /home/${USERS[0]}/$REPO"
+  "    ${D}logs  $R  $LOGDIR"
+  ''
+)
+render
+printf '%s    %s?%s reboot  %s[y/N]%s ' "$P" "$YLW" "$R" "$D" "$R"
+cursor on; read -rsn1 ans; printf '%s\n' "$ans"
+if [[ ${ans,,} == y ]]; then
+  cursor off
+  for s in 5 4 3 2 1; do NOTE="${D}reboot in$R $B$WHT$s$R"; render; sleep 1; done
+  sudo umount -R "$MNT"
+  sudo reboot
+fi
+printf '\n'

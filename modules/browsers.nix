@@ -1,4 +1,6 @@
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
+
+with lib;
 
 {
   options.dotfiles.programs = {
@@ -11,9 +13,10 @@
 
     # --- firefox --- #
     (mkIf config.dotfiles.programs.firefox.enable {
-      home-manager.users.${user} = {
+      home-manager.users.${user} = { config, ... }: {
         programs.firefox = {
           enable = true;
+          configPath = "${config.xdg.configHome}/mozilla/firefox";
           profiles.${user} = {
             settings = {
               "browser.startup.page" = 3;
@@ -80,27 +83,21 @@
             DownloadDirectory = "/home/${user}/downloads";
           };
         };
-        services.psd = {
-          enable = true;
-          browsers = [ "firefox" ];
-        };
       };
     })
 
     # --- google chrome --- #
     (mkIf config.dotfiles.programs.google-chrome.enable {
       home-manager.users.${user} = {
-        home.packages = with pkgs; [
-          (unstable.google-chrome.override {
-            commandLineArgs = [
-              "--restore-last-session"
-              "--hide-crash-restore-bubble"
-            ];
-          })
-        ];
-        services.psd = {
+        programs.chromium = {
           enable = true;
-          browsers = [ "google-chrome" ];
+          package = pkgs.google-chrome;
+        };
+      };
+      programs.chromium = {
+        enable = true;
+        extraOptsRecommended = {
+          "DownloadDirectory" = "/home/${user}/downloads";
         };
       };
     })

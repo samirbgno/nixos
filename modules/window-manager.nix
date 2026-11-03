@@ -40,12 +40,12 @@ in {
         workspaceOutputAssign = lib.pipe monitors.profiles [
           builtins.attrValues
           (builtins.sort (a: b: builtins.length a > builtins.length b))
-          (builtins.map (devices:
-            builtins.map (d:
+          (map (devices:
+            map (d:
               let
                 n = monitors.devices.${d.monitor}.name;
               in
-                builtins.map (w: { workspace = w; name = n; }) d.workspaces
+                map (w: { workspace = w; name = n; }) d.workspaces
             ) devices
           ))
           lib.flatten
@@ -53,7 +53,7 @@ in {
           (builtins.groupBy (n: n.workspace))
           (lib.mapAttrsToList (w: pairs: {
             workspace = w;
-            output = lib.concatMapStringsSep " " (p: p.name) pairs;
+            output = map (p: p.name) pairs;
           }))
         ];
         output = builtins.listToAttrs (lib.mapAttrsToList (_: device: {
@@ -114,8 +114,6 @@ in {
           "Mod4+w" = "move scratchpad";
           "Mod4+v" = "scratchpad show";
 
-          #"Mod4+a" = "exec swaync-client -t -sw";
-
           "Shift+Print" = "exec grim - | wl-copy";
           "Print" = "exec grim -g \"$(slurp)\" - | wl-copy";
 
@@ -164,7 +162,7 @@ in {
     };
     services.wlsunset = {
       enable = true;
-      #duration = 1800;
+      duration = 1800;
       sunset = "20:00";
       sunrise = "06:00";
     };
@@ -174,7 +172,6 @@ in {
       settings = let
         fg = "ffffffff";
         bg = "00000066";
-        fg-alt = "00000080";
         transparent = "00000000";
       in {
         clock = true;
@@ -208,65 +205,6 @@ in {
         line-caps-lock-color = transparent;
       };
     };
-    #services.swaync = {
-    #  enable = true;
-    #  settings = {
-    #    cssPriority = "user";
-    #    ignore-gtk-theme = true;
-    #    control-center-positionY = "center";
-    #    widgets = [
-    #      "mpris"
-    #      "volume"
-    #      "backlight"
-    #      #"menubar"
-    #      #"slider"
-    #      #"inhibitors"
-    #      "notifications"
-    #      "buttons-grid"
-    #    ];
-    #    widget-config = {
-    #      volume.label = "";
-    #      mpris = {
-    #        autohide = true;
-    #        loop-carousel = true;
-    #        show-album-art = "always";
-    #      };
-    #      backlight = {
-    #        min = 2;
-    #        label = "󰃠";
-    #        subsystem = "backlight";
-    #        device = "intel_backlight";
-    #      };
-    #      buttons-grid = {
-    #        buttons-per-row = 4;
-    #        actions = [
-    #          {
-    #            label = "H";
-    #            type = "toogle";
-    #            active = true;
-    #            command = "sh -c 'swaync-client -d -sw'";
-    #            update-command = "sh -c 'set +e;swaync-client -D'";
-    #          }
-    #        ];
-    #      };
-    #    };
-    #  };
-    #  style = ''
-    #    * {
-    #      font-family: ${font};
-    #    }
-    #
-    #    :root {
-    #      --fg: #ffffff;
-    #      --bg: #000000;
-    #    }
-    #    .control-center {
-    #      border-radious: 0;
-    #      border: 1px solid var(--fg);
-    #      background: var(--bg);
-    #    }
-    #  '';
-    #};
     programs.fuzzel = {
       enable = true;
       settings = {
@@ -323,7 +261,7 @@ in {
       settings = lib.mapAttrsToList (name: devices: {
         profile = {
           inherit name;
-          outputs = builtins.map (d:
+          outputs = map (d:
             let
               m = monitors.devices.${d.monitor};
             in {
@@ -341,7 +279,10 @@ in {
   xdg.portal = {
     enable = true;
     wlr.enable = true;
-    extraPortals = [ pkgs.xdg-desktop-portal-gtk ];
+    extraPortals = with pkgs; [
+      xdg-desktop-portal-gtk
+      xdg-desktop-portal-wlr 
+    ];
   };
   fonts = {
     packages = [ fontPackage ];

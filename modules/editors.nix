@@ -1,4 +1,4 @@
-{ config, lib, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 
 with lib;
 
@@ -7,7 +7,7 @@ with lib;
     neovim.enable = mkEnableOption "Enable neovim editor";
     vscode.enable = mkEnableOption "Enable vscode editor";
   };
-  config = let 
+  config = let
     user = config.dotfiles.user;
   in mkMerge [
 
@@ -18,6 +18,8 @@ with lib;
           enable = true;
           viAlias = true;
           vimAlias = true;
+          withRuby = false;
+          withPython3 = false;
           defaultEditor = true;
           extraConfig = ''
             lua << EOF
@@ -44,7 +46,7 @@ with lib;
       home-manager.users.${user} = {
         programs.vscode = {
           enable = true;
-          package = pkgs.unstable.vscode.override {
+          package = pkgs.vscode.override {
             commandLineArgs = "--password-store=gnome-libsecret";
           };
           mutableExtensionsDir = true;
@@ -62,6 +64,9 @@ with lib;
               "biome.suggestInstallingGlobally" = false;
               "workbench.activityBar.location" = "bottom";
             };
+            extensions = with pkgs.vscode-extensions; [
+              jnoortheen.nix-ide
+            ];
           };
         };
         xdg.desktopEntries.code = {
@@ -71,5 +76,6 @@ with lib;
         };
       };
     })
+
   ];
 }

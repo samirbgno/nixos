@@ -14,19 +14,17 @@ A modular, scalable, and declarative NixOS environment built with Flakes and Hom
 ├── flake.nix             # Entry point, inputs, and outputs definition
 ├── flake.lock            # Pinned dependency versions
 ├── hosts/                # Per-machine configurations
-│   ├── common.nix        # Common configurations shared across hosts
 │   └── <host>/           # Replace <host> with the machine's hostname
 │       ├── default.nix   # Host entry point and module imports
 │       ├── system.nix    # Core OS setup (networking, locale, bootloader)
 │       ├── software.nix  # Application feature toggles (Neovim, VSCode, etc.)
 │       ├── hardware.nix  # Kernel modules, microcode, and physical drivers
 │       └── storage.nix   # Disko layouts, file systems, zramSwap, swapDevices, and backups
-├── modules/              # Reusable modules containing feature toggles
-│   ├── boot.nix          # Bootloader and splash screen options
-│   ├── editors.nix       # Text editor configurations and XDG entries
-│   ├── options.nix       # Global options schema (monitors, fonts, user)
-│   └── ...               # Terminals, window managers, tools, etc.
-└── scripts/              # Local shell scripts and utilities
+└── modules/              # Reusable modules containing feature toggles
+    ├── boot.nix          # Bootloader and splash screen options
+    ├── editors.nix       # Text editor configurations and XDG entries
+    ├── options.nix       # Global options schema (monitors, fonts, user)
+    └── ...               # Terminals, window managers, tools, etc.
 ```
 
 ## Bootstrapping a New Host
